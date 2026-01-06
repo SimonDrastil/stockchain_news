@@ -2,14 +2,16 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import clsx from "clsx";
 import { Badge, GlassButton, GlassInput, GlassPanel, Skeleton } from "@/components/ui";
 import { useLocalStorage } from "@/lib/storage";
-import clsx from "clsx";
 
 const DEFAULT_WATCHLIST = ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN"];
 const RANGE_TABS = ["1D", "5D", "1M", "6M", "1Y"] as const;
 const NEWS_WINDOWS = ["24h", "7d", "30d"] as const;
 const SORT_OPTIONS = ["name", "price", "% change"] as const;
+const TAG_OPTIONS = ["Core", "Growth", "Spec"] as const;
+const MOBILE_TABS = ["Watchlist", "Stock", "News"] as const;
 
 const STATIC_COMPANIES: Record<string, string> = {
   AAPL: "Apple",
@@ -51,6 +53,15 @@ type NewsArticle = {
   publishedAt?: string;
 };
 
+type CompanyProfile = {
+  name?: string;
+  ticker?: string;
+  marketCapitalization?: number;
+  shareOutstanding?: number;
+  ipo?: string;
+  finnhubIndustry?: string;
+};
+
 const formatNumber = (value?: number) => {
   if (value === null || value === undefined || Number.isNaN(value)) return "—";
   return value.toLocaleString("en-US", { maximumFractionDigits: 2 });
@@ -69,6 +80,16 @@ const getTimeAgo = (date: Date) => {
   if (hours < 24) return `${hours}h ago`;
   const days = Math.floor(hours / 24);
   return `${days}d ago`;
+};
+
+const getMarketStatus = () => {
+  const now = new Date();
+  const nyHour = Number(now.toLocaleString("en-US", { timeZone: "America/New_York", hour: "2-digit", hour12: false }));
+  const nyMinute = Number(now.toLocaleString("en-US", { timeZone: "America/New_York", minute: "2-digit", hour12: false }));
+  const totalMinutes = nyHour * 60 + nyMinute;
+  const open = 9 * 60 + 30;
+  const close = 16 * 60;
+  return totalMinutes >= open && totalMinutes <= close ? "Market open" : "Market closed";
 };
 
 export default function Home() {
@@ -90,9 +111,15 @@ export default function Home() {
       theme: "dark",
     }
   );
+  const [tagMap, setTagMap] = useLocalStorage<Record<string, string>>(
+    "watchlistTags",
+    {}
+  );
+  const [pinned, setPinned] = useLocalStorage<string[]>("watchlistPinned", []);
 
   const [sortBy, setSortBy] = useState<(typeof SORT_OPTIONS)[number]>("name");
   const [search, setSearch] = useState("");
+  const [addTicker, setAddTicker] = useState("");
   const [bulkInput, setBulkInput] = useState("");
   const [companyNewsTab, setCompanyNewsTab] = useState<"forYou" | "market">(
     "forYou"
@@ -101,10 +128,12 @@ export default function Home() {
   const [keyword, setKeyword] = useState("");
   const [watchlistOnly, setWatchlistOnly] = useState(false);
   const [range, setRange] = useState<(typeof RANGE_TABS)[number]>("1M");
+  const [mobileTab, setMobileTab] = useState<(typeof MOBILE_TABS)[number]>("Stock");
 
   const [quotes, setQuotes] = useState<Record<string, QuoteData>>({});
   const [candles, setCandles] = useState<CandleData | null>(null);
-  const [companyProfile, setCompanyProfile] = useState<Record<string, string>>({});
+  const [sparklineMap, setSparklineMap] = useState<Record<string, CandleData>>({});
+  const [companyProfile, setCompanyProfile] = useState<Record<string, CompanyProfile>>({});
   const [companyNews, setCompanyNews] = useState<NewsArticle[]>([]);
   const [marketNews, setMarketNews] = useState<NewsArticle[]>([]);
   const [newsLoading, setNewsLoading] = useState(false);
@@ -139,6 +168,14 @@ export default function Home() {
     setChartLoading(false);
   };
 
+  const refreshSparkline = async (ticker: string) => {
+    const response = await fetch(`/api/candles?ticker=${ticker}&range=5D`);
+    const payload = await response.json();
+    if (payload.data?.s === "ok") {
+      setSparklineMap((prev) => ({ ...prev, [ticker]: payload.data }));
+    }
+  };
+
   const refreshProfiles = async () => {
     const missing = watchlist.filter((ticker) => !companyProfile[ticker]);
     await Promise.all(
@@ -147,7 +184,7 @@ export default function Home() {
         const payload = await response.json();
         setCompanyProfile((prev) => ({
           ...prev,
-          [ticker]: payload.data?.name || payload.data?.ticker || ticker,
+          [ticker]: payload.data || {},
         }));
       })
     );
@@ -180,10 +217,24 @@ export default function Home() {
   }, [selected, range, newsWindow]);
 
   useEffect(() => {
+    watchlist.forEach((ticker) => {
+      if (!sparklineMap[ticker]) {
+        refreshSparkline(ticker);
+      }
+    });
+  }, [watchlist]);
+
+  useEffect(() => {
     if (!settings.autoRefresh) return;
     const interval = setInterval(refreshQuotes, settings.refresh * 1000);
     return () => clearInterval(interval);
   }, [settings.autoRefresh, settings.refresh, watchlist]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    document.body.classList.toggle("theme-light", settings.theme === "light");
+    document.body.classList.toggle("reduce-motion", settings.reduceMotion);
+  }, [settings.theme, settings.reduceMotion]);
 
   const filteredSuggestions = useMemo(() => {
     if (!search) return [];
@@ -206,14 +257,17 @@ export default function Home() {
 
   const sortedWatchlist = useMemo(() => {
     const list = [...watchlist];
+    const pinnedSet = new Set(pinned);
     return list.sort((a, b) => {
+      if (pinnedSet.has(a) && !pinnedSet.has(b)) return -1;
+      if (!pinnedSet.has(a) && pinnedSet.has(b)) return 1;
       if (sortBy === "name") return a.localeCompare(b);
       if (sortBy === "price") {
         return (quotes[b]?.c || 0) - (quotes[a]?.c || 0);
       }
       return (quotes[b]?.dp || 0) - (quotes[a]?.dp || 0);
     });
-  }, [watchlist, sortBy, quotes]);
+  }, [watchlist, sortBy, quotes, pinned]);
 
   const handleAddTicker = (ticker: string) => {
     if (!ticker) return;
@@ -221,6 +275,7 @@ export default function Home() {
     if (watchlist.includes(upper)) return;
     setWatchlist([...watchlist, upper]);
     setSelected(upper);
+    setAddTicker("");
   };
 
   const handleBulkAdd = () => {
@@ -236,23 +291,55 @@ export default function Home() {
 
   const newsItems = useMemo(() => {
     const base = companyNewsTab === "forYou" ? companyNews : marketNews;
+    const watchlistSet = new Set(watchlist);
     return base.filter((item) => {
       const title = item.headline || item.title || "";
       const description = item.summary || item.description || "";
       const matchesKeyword = keyword
         ? `${title} ${description}`.toLowerCase().includes(keyword.toLowerCase())
         : true;
-      return matchesKeyword;
+      const matchesWatchlist = watchlistOnly
+        ? Array.from(watchlistSet).some((ticker) =>
+            `${title} ${description}`.toUpperCase().includes(ticker)
+          )
+        : true;
+      return matchesKeyword && matchesWatchlist;
     });
-  }, [companyNewsTab, companyNews, marketNews, keyword]);
+  }, [companyNewsTab, companyNews, marketNews, keyword, watchlistOnly, watchlist]);
 
   const selectedQuote = quotes[selected];
   const dailyChange = selectedQuote?.d ?? 0;
   const dailyPercent = selectedQuote?.dp ?? 0;
   const changeColor = dailyChange >= 0 ? "text-white" : "text-white/60";
+  const profile = companyProfile[selected] || {};
+  const marketStatus = getMarketStatus();
+
+  const renderSparkline = (ticker: string) => {
+    const data = sparklineMap[ticker];
+    if (!data) {
+      return <div className="h-8 w-24 rounded-full bg-white/10" />;
+    }
+    const points = data.c.slice(-7).map((value, index, arr) => {
+      const x = (index / (arr.length - 1)) * 80 + 4;
+      const min = Math.min(...arr);
+      const max = Math.max(...arr);
+      const y = 28 - ((value - min) / (max - min || 1)) * 20;
+      return `${x},${y}`;
+    });
+    return (
+      <svg className="h-8 w-24" viewBox="0 0 88 32">
+        <polyline
+          points={points.join(" ")}
+          fill="none"
+          stroke="rgba(255,255,255,0.7)"
+          strokeWidth="2"
+        />
+      </svg>
+    );
+  };
 
   return (
-    <div className="min-h-screen bg-black px-6 pb-12 pt-6">
+    <div className={clsx("min-h-screen px-6 pb-12 pt-6", settings.theme === "light" ? "bg-white text-black" : "bg-black text-white")}>
       <header className="sticky top-4 z-20 mx-auto flex w-full max-w-7xl items-center justify-between gap-6 rounded-full border border-white/10 bg-black/70 px-6 py-3 backdrop-blur-lg">
         <div className="text-sm font-medium tracking-[0.3em] text-white/80">StockChain News</div>
         <div className="relative flex-1">
@@ -361,8 +448,28 @@ export default function Home() {
         </div>
       </header>
 
-      <main className="mx-auto mt-8 grid max-w-7xl gap-6 lg:grid-cols-[1.2fr_2fr_1.4fr]">
-        <GlassPanel className="p-6">
+      <div className="mx-auto mt-6 flex max-w-7xl gap-2 rounded-full border border-white/10 bg-black/60 p-2 text-xs uppercase tracking-[0.3em] text-white/60 lg:hidden">
+        {MOBILE_TABS.map((tab) => (
+          <button
+            key={tab}
+            className={clsx(
+              "flex-1 rounded-full py-2",
+              mobileTab === tab ? "bg-white/10 text-white" : "text-white/50"
+            )}
+            onClick={() => setMobileTab(tab)}
+          >
+            {tab}
+          </button>
+        ))}
+      </div>
+
+      <main className="mx-auto mt-6 grid max-w-7xl gap-6 lg:grid-cols-[1.2fr_2fr_1.4fr]">
+        <GlassPanel
+          className={clsx(
+            "p-6",
+            mobileTab !== "Watchlist" ? "hidden lg:block" : "block"
+          )}
+        >
           <div className="flex items-center justify-between">
             <h2 className="text-sm uppercase tracking-[0.3em] text-white/60">Watchlist</h2>
             <select
@@ -377,43 +484,92 @@ export default function Home() {
               ))}
             </select>
           </div>
-          <div className="mt-4 space-y-3">
+          <div className={clsx("mt-4 space-y-3", settings.compact && "space-y-2")}>
             {sortedWatchlist.map((ticker) => {
               const quote = quotes[ticker];
-              const name = companyProfile[ticker] || STATIC_COMPANIES[ticker] || ticker;
+              const name = companyProfile[ticker]?.name || STATIC_COMPANIES[ticker] || ticker;
               const change = quote?.d ?? 0;
               const percent = quote?.dp ?? 0;
               return (
-                <button
+                <div
                   key={ticker}
-                  onClick={() => setSelected(ticker)}
                   className={clsx(
-                    "flex w-full items-center justify-between rounded-2xl border border-white/5 px-4 py-3 text-left transition",
-                    selected === ticker ? "bg-white/10" : "bg-white/5 hover:bg-white/10"
+                    "rounded-2xl border border-white/5 px-4 py-3",
+                    selected === ticker ? "bg-white/10" : "bg-white/5"
                   )}
                 >
-                  <div>
-                    <p className="text-sm font-medium">{ticker}</p>
-                    <p className="text-xs text-white/50">{name}</p>
+                  <div className="flex items-center justify-between gap-4">
+                    <button
+                      onClick={() => setSelected(ticker)}
+                      className="flex flex-1 items-center gap-3 text-left"
+                    >
+                      <div>
+                        <p className="text-sm font-medium">{ticker}</p>
+                        <p className="text-xs text-white/50">{name}</p>
+                      </div>
+                    </button>
+                    <div className="text-right">
+                      <p className="text-sm">{formatCurrency(quote?.c)}</p>
+                      <p className={clsx("text-xs", change >= 0 ? "text-white/70" : "text-white/40")}>
+                        {formatNumber(change)} ({formatNumber(percent)}%)
+                      </p>
+                    </div>
                   </div>
-                  <div className="text-right">
-                    <p className="text-sm">{formatCurrency(quote?.c)}</p>
-                    <p className={clsx("text-xs", change >= 0 ? "text-white/70" : "text-white/40")}>
-                      {formatNumber(change)} ({formatNumber(percent)}%)
-                    </p>
+                  <div className="mt-3 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <select
+                        className="rounded-full border border-white/10 bg-black/40 px-2 py-1 text-[10px]"
+                        value={tagMap[ticker] || "Core"}
+                        onChange={(event) =>
+                          setTagMap({ ...tagMap, [ticker]: event.target.value })
+                        }
+                      >
+                        {TAG_OPTIONS.map((tag) => (
+                          <option key={tag} value={tag}>
+                            {tag}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        className={clsx(
+                          "rounded-full border px-2 py-1 text-[10px]",
+                          pinned.includes(ticker)
+                            ? "border-white/40 bg-white/10"
+                            : "border-white/10"
+                        )}
+                        onClick={() =>
+                          setPinned((prev) =>
+                            prev.includes(ticker)
+                              ? prev.filter((item) => item !== ticker)
+                              : [...prev, ticker]
+                          )
+                        }
+                      >
+                        Pin
+                      </button>
+                      <button
+                        className="rounded-full border border-white/10 px-2 py-1 text-[10px]"
+                        onClick={() =>
+                          setWatchlist((prev) => prev.filter((item) => item !== ticker))
+                        }
+                      >
+                        Remove
+                      </button>
+                    </div>
+                    {renderSparkline(ticker)}
                   </div>
-                </button>
+                </div>
               );
             })}
           </div>
           <div className="mt-6 space-y-3">
             <GlassInput
-              value={search}
-              onChange={setSearch}
+              value={addTicker}
+              onChange={setAddTicker}
               placeholder="Add ticker"
             />
             <div className="flex gap-2">
-              <GlassButton onClick={() => handleAddTicker(search)}>Add</GlassButton>
+              <GlassButton onClick={() => handleAddTicker(addTicker)}>Add</GlassButton>
               <GlassButton onClick={handleBulkAdd}>Bulk add</GlassButton>
             </div>
             <GlassInput
@@ -424,22 +580,23 @@ export default function Home() {
           </div>
         </GlassPanel>
 
-        <div className="space-y-6">
+        <div className={clsx("space-y-6", mobileTab !== "Stock" ? "hidden lg:block" : "block")}>
           <GlassPanel className="p-6">
             <div className="flex items-start justify-between">
               <div>
                 <p className="text-xs uppercase tracking-[0.3em] text-white/60">Selected</p>
                 <h1 className="mt-2 text-3xl font-semibold">{selected}</h1>
                 <p className="text-sm text-white/50">
-                  {companyProfile[selected] || STATIC_COMPANIES[selected] || "—"}
+                  {profile.name || STATIC_COMPANIES[selected] || "—"}
                 </p>
+                <p className="mt-2 text-xs text-white/40">{marketStatus}</p>
               </div>
               <div className="text-right">
                 <p className="text-3xl font-semibold">{formatCurrency(selectedQuote?.c)}</p>
                 <p className={clsx("text-sm", changeColor)}>
                   {formatNumber(dailyChange)} ({formatNumber(dailyPercent)}%)
                 </p>
-                <Badge className="mt-2">{delayed ? "Data delayed" : "Market"}</Badge>
+                <Badge className="mt-2">{delayed ? "Data delayed" : "Realtime"}</Badge>
               </div>
             </div>
             <div className="mt-6 flex gap-2">
@@ -485,7 +642,31 @@ export default function Home() {
                 </ResponsiveContainer>
               )}
             </div>
-            <div className="mt-6 grid grid-cols-2 gap-4 text-xs text-white/60">
+            <div className="mt-6 grid grid-cols-2 gap-4 text-xs text-white/60 md:grid-cols-4">
+              <div>
+                <p className="uppercase tracking-[0.2em]">Market cap</p>
+                <p className="text-white">{formatNumber(profile.marketCapitalization)}</p>
+              </div>
+              <div>
+                <p className="uppercase tracking-[0.2em]">P/E</p>
+                <p className="text-white">—</p>
+              </div>
+              <div>
+                <p className="uppercase tracking-[0.2em]">Volume</p>
+                <p className="text-white">{formatNumber(selectedQuote?.v)}</p>
+              </div>
+              <div>
+                <p className="uppercase tracking-[0.2em]">Avg volume</p>
+                <p className="text-white">—</p>
+              </div>
+              <div>
+                <p className="uppercase tracking-[0.2em]">52w high</p>
+                <p className="text-white">—</p>
+              </div>
+              <div>
+                <p className="uppercase tracking-[0.2em]">52w low</p>
+                <p className="text-white">—</p>
+              </div>
               <div>
                 <p className="uppercase tracking-[0.2em]">Open</p>
                 <p className="text-white">{formatCurrency(selectedQuote?.o)}</p>
@@ -493,14 +674,6 @@ export default function Home() {
               <div>
                 <p className="uppercase tracking-[0.2em]">Prev close</p>
                 <p className="text-white">{formatCurrency(selectedQuote?.pc)}</p>
-              </div>
-              <div>
-                <p className="uppercase tracking-[0.2em]">Day high</p>
-                <p className="text-white">{formatCurrency(selectedQuote?.h)}</p>
-              </div>
-              <div>
-                <p className="uppercase tracking-[0.2em]">Day low</p>
-                <p className="text-white">{formatCurrency(selectedQuote?.l)}</p>
               </div>
             </div>
             <div className="mt-6 flex flex-wrap gap-2">
@@ -548,7 +721,12 @@ export default function Home() {
           </GlassPanel>
         </div>
 
-        <GlassPanel className="p-6">
+        <GlassPanel
+          className={clsx(
+            "p-6",
+            mobileTab !== "News" ? "hidden lg:block" : "block"
+          )}
+        >
           <div className="flex items-center justify-between">
             <h2 className="text-sm uppercase tracking-[0.3em] text-white/60">News</h2>
             <div className="flex gap-2">
@@ -607,12 +785,14 @@ export default function Home() {
                   </div>
                 ))
               : newsItems
-                  .filter((item) => (watchlistOnly ? watchlist.includes(selected) : true))
                   .slice(0, 8)
                   .map((item, index) => {
                     const title = item.headline || item.title || "Untitled";
                     const description = item.summary || item.description || "";
                     const source = item.source || "Market";
+                    const badges = watchlist.filter((ticker) =>
+                      `${title} ${description}`.toUpperCase().includes(ticker)
+                    );
                     const published = item.datetime
                       ? new Date(item.datetime * 1000)
                       : item.publishedAt
@@ -632,6 +812,13 @@ export default function Home() {
                         </div>
                         <h4 className="mt-2 text-sm font-medium text-white">{title}</h4>
                         <p className="mt-2 text-xs text-white/60">{description}</p>
+                        {badges.length > 0 && (
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {badges.slice(0, 3).map((ticker) => (
+                              <Badge key={ticker}>{ticker}</Badge>
+                            ))}
+                          </div>
+                        )}
                       </a>
                     );
                   })}

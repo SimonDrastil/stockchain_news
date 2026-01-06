@@ -14,6 +14,56 @@ body {
   background-color: #050505;
 }
 
+body.theme-light {
+  background-color: #f5f5f5;
+  color: #111111;
+}
+
+body.theme-light .glass-panel,
+body.theme-light .glass-panel-dark {
+  background-color: rgba(0, 0, 0, 0.04);
+  border-color: rgba(0, 0, 0, 0.12);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.12);
+}
+
+body.theme-light .glass-input {
+  background-color: rgba(0, 0, 0, 0.04);
+  border-color: rgba(0, 0, 0, 0.12);
+  color: #111111;
+}
+
+body.theme-light .glass-input::placeholder {
+  color: rgba(17, 17, 17, 0.4);
+}
+
+body.theme-light .glass-button,
+body.theme-light .badge {
+  background-color: rgba(0, 0, 0, 0.04);
+  border-color: rgba(0, 0, 0, 0.12);
+  color: rgba(17, 17, 17, 0.7);
+}
+
+body.theme-light [class*="text-white/"] {
+  color: rgba(17, 17, 17, 0.6) !important;
+}
+
+body.theme-light .text-white {
+  color: #111111 !important;
+}
+
+body.theme-light [class*="border-white/"] {
+  border-color: rgba(0, 0, 0, 0.12) !important;
+}
+
+body.theme-light [class*="bg-white/"] {
+  background-color: rgba(0, 0, 0, 0.04) !important;
+}
+
+body.reduce-motion * {
+  transition-duration: 0ms !important;
+  animation-duration: 0ms !important;
+}
+
 .glass-panel {
   @apply bg-glass-white/60 border border-glass-border backdrop-blur-glass shadow-glass rounded-glass;
 }
