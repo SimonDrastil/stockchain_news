@@ -1,0 +1,48 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  background-color: #050505;
+}
+
+.glass-panel {
+  @apply bg-glass-white/60 border border-glass-border backdrop-blur-glass shadow-glass rounded-glass;
+}
+
+.glass-panel-dark {
+  @apply bg-glass-black/60 border border-glass-border backdrop-blur-glass shadow-glass rounded-glass;
+}
+
+.glass-input {
+  @apply w-full bg-white/5 border border-white/10 rounded-full px-4 py-2 text-sm text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-white/20;
+}
+
+.glass-button {
+  @apply inline-flex items-center justify-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs uppercase tracking-[0.2em] text-white/80 transition duration-200 hover:bg-white/10;
+}
+
+.badge {
+  @apply rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[10px] uppercase tracking-[0.2em] text-white/60;
+}
+
+.skeleton {
+  @apply animate-pulse rounded-full bg-white/10;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
